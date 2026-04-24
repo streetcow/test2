@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>국민성장펀드 AI 계산기 (최종 보정판)</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; line-height: 1.6; background: #f4f7f9; }
+  .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+  .upload-area { border: 2px dashed #ccc; padding: 40px; text-align: center; cursor: pointer; margin-bottom: 20px; }
+  .btn { width: 100%; padding: 15px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+  .btn:disabled { background: #ccc; }
+  #result { margin-top: 20px; display: none; padding: 15px; background: #eff6ff; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h2>📈 소득 분석 계산기</h2>
+  <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+    <p id="fileLabel">여기를 클릭하여 서류 업로드</p>
+    <input type="file" id="fileInput" hidden onchange="handleFile(this)">
+  </div>
+  <button id="runBtn" class="btn" disabled onclick="startProcess()">AI 분석 시작</button>
+  
+  <div id="result">
+    <p id="resContent"></p>
+    <h3 id="benefit" style="color: #2563eb; margin-top: 10px;"></h3>
+  </div>
+</div>
+
+<script>
+const API_KEY = "AIzaSyCB7_d15CyahLknDImQ5MRJPxI-4Bi1Mhk";
+let selectedFile = null;
+
+function handleFile(input) {
+  if (input.files && input.files[0]) {
+    selectedFile = input.files[0];
+    document.getElementById('fileLabel').innerText = "선택됨: " + selectedFile.name;
+    document.getElementById('runBtn').disabled = false;
+  }
+}
+
+async function startProcess() {
+  const btn = document.getElementById('runBtn');
+  const resDiv = document.getElementById('result');
+  btn.innerText = "분석 중...";
+  btn.disabled = true;
+
+  try {
+    const b64 = await toBase64(selectedFile);
+    const data = await callGemini(b64, selectedFile.type);
+    
+    document.getElementById('resContent').innerHTML = `
+      <b>서류:</b> ${data.name}<br>
+      <b>총급여:</b> ${data.salary.toLocaleString()}만원<br>
+      <b>과세표준:</b> ${data.taxable.toLocaleString()}만원
+    `;
+    
+    let rate = data.taxable > 8800 ? 0.35 : (data.taxable > 5000 ? 0.24 : 0.15);
+    let benefit = Math.round(1200 * rate * 1.1);
+    document.getElementById('benefit').innerText = `예상 환급액: 약 ${benefit}만원`;
+    resDiv.style.display = "block";
+
+  } catch (err) {
+    alert("오류가 발생했습니다: " + err.message);
+    console.error(err);
+  } finally {
+    btn.innerText = "AI 분석 시작";
+    btn.disabled = false;
+  }
+}
+
+async function callGemini(base64, mime) {
+  // 엔드포인트 v1beta 유지
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+  
+  const payload = {
+    contents: [{
+      parts: [
+        { text: "연말정산 문서에서 '총급여'와 '과세표준' 금액을 숫자만 추출해. 반드시 JSON 형식으로만 답해: {\"salary\": 숫자, \"taxable\": 숫자, \"name\": \"문서명\"}" },
+        { inline_data: { mime_type: mime, data: base64 } }
+      ]
+    }]
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const json = await response.json();
+  if (!response.ok) {
+    // API 키가 문제라면 여기서 구체적인 메시지가 나옵니다.
+    throw new Error(json.error?.message || "네트워크 통신 오류");
+  }
+
+  const resultText = json.candidates[0].content.parts[0].text;
+  return JSON.parse(resultText.replace(/```json|```/g, ""));
+}
+
+function toBase64(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
+</script>
+</body>
+</html>
